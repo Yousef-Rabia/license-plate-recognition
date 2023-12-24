@@ -1,19 +1,16 @@
-from easyocr import Reader
+#from easyocr import Reader
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import cv2
 import arabic_reshaper
-from bidi.algorithm import get_display
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
 from numba import jit
 
-## testing
-from sklearn.metrics import confusion_matrix
-from sklearn.metrics import f1_score
-from sklearn.metrics import accuracy_score
+from skimage.measure import find_contours
+from skimage.draw import rectangle
 
 
 
@@ -423,22 +420,22 @@ def getSimilarity(img1, img2):
 
 
 # Function to render Arabic text on the image
-def put_arabic_text(image, text, position, color=(0, 255, 0), thickness=1):
-    font_file = "Sahel.ttf"  # File containing the Arabic font
-    font = ImageFont.truetype(font_file, 18)  # Load the font with size 18
-    reshaped_text = arabic_reshaper.reshape(text)  # Reshape Arabic text for correct display
-    bidi_text = get_display(reshaped_text)  # Get bidi text for correct RTL display
+# def put_arabic_text(image, text, position, color=(0, 255, 0), thickness=1):
+#     font_file = "Sahel.ttf"  # File containing the Arabic font
+#     font = ImageFont.truetype(font_file, 18)  # Load the font with size 18
+#     reshaped_text = arabic_reshaper.reshape(text)  # Reshape Arabic text for correct display
+#     bidi_text = get_display(reshaped_text)  # Get bidi text for correct RTL display
     
-    # Convert the OpenCV image (numpy array) to a Pillow Image
-    pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+#     # Convert the OpenCV image (numpy array) to a Pillow Image
+#     pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     
-    # Use Pillow to draw the Arabic text on the image
-    draw = ImageDraw.Draw(pil_image)
-    draw.text(position, bidi_text, color, font=font, stroke_width=thickness)  # Draw the text
+#     # Use Pillow to draw the Arabic text on the image
+#     draw = ImageDraw.Draw(pil_image)
+#     draw.text(position, bidi_text, color, font=font, stroke_width=thickness)  # Draw the text
     
-    # Convert the modified Pillow image back to a numpy array
-    image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-    return image
+#     # Convert the modified Pillow image back to a numpy array
+#     image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+#     return image
 
 # Preprocessing steps for the image before plate detection
 def pre_process_image(image_path):
@@ -621,58 +618,82 @@ def localization(img): #take BGR image and return BGR image
         #rotated = rotate_blue(plate_img)
         cropped = crop_up(plate_img)
     return cropped
+
+
+def calculate_area(image_array):
+    height, width = image_array[0].shape
+    return width * height
+
+
 # Detect license plate using contours
 def plate_detection_using_contours():
-    car = pre_process_image('cars/car23.jpg')
-    edged = cv2.Canny(car, 10, 200)
+    car = pre_process_image('cars/car21.jpg')
+    found = False
+    thresh = 200
+    plate = []
 
-  
-
-    closing = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, np.ones((5,5),np.uint8))
-    opening = cv2.morphologyEx(closing, cv2.MORPH_OPEN, np.ones((3,3),np.uint8))
-    
-    cv2.imshow('Image3', edged)
-    cv2.imshow('Image4', closing)
-    cv2.imshow('Image5', opening)
-    cv2.waitKey(0)
-    
-    # Find contours in the edged image
-    contours, _ = cv2.findContours(opening, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Sort the contours by area in descending order and select the top 5 contours
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-
-    # Iterate through the detected contours
-    for contour in contours:
-        # Calculate the arc length of the contour
-        arc_length = cv2.arcLength(contour, True)
+    while found == False:
+        ret, bin_img = cv2.threshold(car,thresh,255,cv2.THRESH_BINARY)
+        open1 = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, np.ones((3,3),np.uint8))
+        close1 = cv2.morphologyEx(open1, cv2.MORPH_CLOSE, np.ones((5,5),np.uint8))
+        close2 = cv2.morphologyEx(close1, cv2.MORPH_CLOSE, np.ones((5,5),np.uint8))
+        open2 = cv2.morphologyEx(close2, cv2.MORPH_OPEN, np.ones((3,3),np.uint8))
         
-        # Approximate the contour shape to a polygonal curve
-        approx = cv2.approxPolyDP(contour, 0.02 * arc_length, True)
+        cv2.imshow('bin_img', bin_img)
+        cv2.imshow('close1', close1)
+        cv2.imshow('morphed', open2)
+        
+        # Find contours in the edged image
+        contours = find_contours(open2)
+        bounding_boxes = []
+        plate_suspects = []
 
-        # Check if the approximated polygon has 4 sides (likely a license plate)
-        if len(approx) == 4:
-            plate_contour = approx
-            break  # Stop iterating if a valid plate contour is found
-    
-    # Get the bounding rectangle of the plate contour
-    (x, y, w, h) = cv2.boundingRect(plate_contour)
-    
-    # Extract the region of interest (ROI) containing the detected plate
-    plate = car[y:y + h, x:x + w]
-    return plate
+        # Iterate through the detected contours
+        for contour in contours:
+            width = contour[:, 1].max() - contour[:, 1].min()
+            height = contour[:, 0].max() - contour[:, 0].min()
+            aspect = width / height
+            if 1.5 < aspect < 4.5:
+                bounding_boxes.append([contour[:, 1].min(), contour[:, 1].max(), contour[:, 0].min(), contour[:, 0].max()])
+        img_with_boxes = np.zeros(shape=bin_img.shape)
 
+
+        # Get the bounding rectangle of the plate contour
+        for box in bounding_boxes:
+            [Xmin, Xmax, Ymin, Ymax] = box
+            rr, cc = rectangle(start = (Ymin,Xmin), end = (Ymax,Xmax), shape=bin_img.shape)
+            plate_suspects.append([close1[rr, cc], np.rot90(np.fliplr(car[rr, cc]), k=1)])
+            img_with_boxes[rr, cc] = 255 #set color white
+
+
+        plate_suspects = sorted(plate_suspects, key=calculate_area)
+        for plate_suspect in plate_suspects:
+            #closed_plate_suspect = cv2.morphologyEx(plate_suspect, cv2.MORPH_CLOSE, np.ones((4,4),np.uint8))
+            contours = find_contours(plate_suspect[0])
+            print(len(contours))
+            if 6 < len(contours) < 15:
+                plate = plate_suspect[1]
+                found = True
+            else:
+                continue
+        thresh -= 10
+
+    cv2.imshow('boxes', img_with_boxes)
+    cv2.imshow('plate', plate)
+    cv2.waitKey(0)
 
 # buildCharDB()
 # Perform plate detection using both methods
-# plate1 = plate_detection_using_contours()
-# cv2.imshow('Image', plate1)
-img = cv2.imread('cars/car23.jpg')
-plate2 = localization(img)
-cv2.imshow('Image2', plate2)
-plate3 = plate_detection_haarcascade()
-cv2.imshow('Image3', plate3)
-cv2.waitKey(0)
+plate1 = plate_detection_using_contours()
+
+# img = cv2.imread('cars/car31.jpg')
+# plate2 = localization(img)
+# cv2.imshow('Image2', plate2)
+
+# plate3 = plate_detection_haarcascade()
+# cv2.imshow('Image3', plate3)
+# cv2.waitKey(0)
+
 # # Perform OCR to read text from the detected plates
 # reader = Reader(['ar'], gpu=False, verbose=False)
 # detection1 = reader.readtext(plate1)
