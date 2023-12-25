@@ -615,18 +615,32 @@ def plate_detection(path):
     plate = car[y:y + h, x:x + w]
     return plate
 
-def PlateToLetters(plate):
+def platePreProcess(plate):
     dim = (1404, 446)
-    plate = cv2.resize(plate, dim, interpolation = cv2.INTER_AREA)
+    plate = cv2.resize(plate, dim, interpolation=cv2.INTER_AREA)
+    height, width = plate.shape[:2]
+    plate = plate[0:height-20, :]
+    height, width = plate.shape[:2]
+    mask = np.zeros((height, width), dtype=np.uint8)
+    start_x = (width - 50) // 2
+    end_x = start_x + 50
+    mask[:, start_x:end_x] = 255  # Set the center section to white
+
+    # Apply the mask to the plate image
+    plate_with_white_center = np.copy(plate)
+    plate_with_white_center[mask == 255] = 255  # Set the corresponding pixels in the plate image to white
+    
+    return plate_with_white_center  # Return the modified image
+
+
+def PlateToLetters(plate):
+
+    plate = platePreProcess(plate)
+    
     blurPlate = cv2.blur(plate,(10,10))
     blurPlate = cv2.blur(blurPlate,(10,10))
-    medianPlate= cv2.medianBlur(blurPlate,5)
-    height, _ = medianPlate.shape[:2]
-    cropped_median_plate = medianPlate[0:height-20, :]
-    _, thresholdPlate = cv2.threshold(cropped_median_plate,150,255,cv2.THRESH_BINARY)
-    
-    ## i want to crop 20 px from this image  thresholdPlate
-    
+    medianPlate= cv2.medianBlur(blurPlate,5)    
+    _, thresholdPlate = cv2.threshold(medianPlate,150,255,cv2.THRESH_BINARY)    
     
     
     # Create a custom kernel representing a 45-degree oval
@@ -645,7 +659,7 @@ def PlateToLetters(plate):
     
     
     # Split the plate image into two halves
-    half_width = plate.shape[1] // 2
+    half_width = (plate.shape[1]) // 2
     left_half = thresholdPlate[:, :half_width]  # Left half of the plate image
     right_half = thresholdPlate[:, half_width:]  # Right half of the plate image
 
@@ -659,8 +673,8 @@ def PlateToLetters(plate):
     # Concatenate the processed halves back together
     result_plate = np.hstack((open_left, open_right))
     
-    cv2.imshow('bin', result_plate)
-    cv2.waitKey(0)
+    # cv2.imshow('bin', result_plate)
+    # cv2.waitKey(0)
     contours, _ = cv2.findContours(result_plate, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     contours = sort_contours(contours)[0]
 
@@ -847,6 +861,6 @@ def main(path):
     trainKnn()
 
     return predictKnn(letterFeatures)
-print("############################################################################################################")
-print(main("cars\car32.jpg"))
+# print("############################################################################################################")
+# print(main("cars\car39.jpg"))
 
